@@ -17,6 +17,9 @@ using Windows.ApplicationModel.Background;
 using Windows.Data.Xml.Dom;
 using Windows.Web.Syndication;
 using Windows.UI.Popups;
+using Windows.ApplicationModel;
+using Windows.Foundation.Metadata;
+using Windows.UI.Core.Preview;
 
 // The Blank Page item template is documented at https://go.microsoft.com/fwlink/?LinkId=402352&clcid=0x409
 
@@ -30,6 +33,10 @@ namespace App1
         public MainPage()
         {
             this.InitializeComponent();
+
+            SystemNavigationManagerPreview mgr =
+            SystemNavigationManagerPreview.GetForCurrentView();
+            mgr.CloseRequested += SystemNavigationManager_CloseRequested;
         }
 
         /// <summary>
@@ -40,6 +47,7 @@ namespace App1
         protected override void OnNavigatedTo(NavigationEventArgs e)
         {
             this.RegisterBackgroundTask();
+            base.OnNavigatedTo(e);
         }
 
 
@@ -61,10 +69,20 @@ namespace App1
                 taskBuilder.Name = taskName;
                 taskBuilder.TaskEntryPoint = taskEntryPoint;
                 taskBuilder.SetTrigger(new TimeTrigger(15, false));
-                var registration = taskBuilder.Register();
+                taskBuilder.Register();
             } else
             {
                 FuckYouDiag();
+            }
+        }
+
+        private async void RegisterAppTrigger()
+        {
+            var requestStatus = await Windows.ApplicationModel.Background.BackgroundExecutionManager.RequestAccessAsync();
+            if (requestStatus != BackgroundAccessStatus.AlwaysAllowed)
+            {
+                // Depending on the value of requestStatus, provide an appropriate response
+                // such as notifying the user which functionality won't work as expected
             }
         }
         
@@ -83,6 +101,38 @@ namespace App1
         private void TextBlock_SelectionChanged(object sender, RoutedEventArgs e)
         {
 
+        }
+
+        private async void SystemNavigationManager_CloseRequested(object sender, SystemNavigationCloseRequestedPreviewEventArgs e)
+        {
+            int closeNum = 1;
+            Deferral deferral = e.GetDeferral();
+            if (false)
+            {
+                // user cancelled the close operation
+                e.Handled = true;
+                deferral.Complete();
+            }
+            else
+            {
+                switch (closeNum)
+                {
+                    case 0:
+                        e.Handled = false;
+                        deferral.Complete();
+                        break;
+
+                    case 1:
+                        if (ApiInformation.IsApiContractPresent(
+                             "Windows.ApplicationModel.FullTrustAppContract", 1, 0))
+                        {
+                            await FullTrustProcessLauncher.LaunchFullTrustProcessForCurrentAppAsync();
+                        }
+                        e.Handled = false;
+                        deferral.Complete();
+                        break;
+                }
+            }
         }
     }
 }

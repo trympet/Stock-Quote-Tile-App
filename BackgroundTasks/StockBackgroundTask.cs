@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+
 using System.Net;
 using System.IO;
 using System.Threading.Tasks;
@@ -11,9 +10,10 @@ using System.Diagnostics;
 using Windows.ApplicationModel.Background;
 using Windows.Data.Xml.Dom;
 using Windows.UI.Notifications;
-using Windows.Web.Syndication;
 using Newtonsoft.Json.Linq;
 using Microsoft.Toolkit.Uwp.Notifications; // Notifications library
+using Windows.ApplicationModel.AppService;
+using Windows.Foundation.Collections;
 
 namespace BackgroundTasks
 {
@@ -60,12 +60,14 @@ namespace BackgroundTasks
         {
             WebResponse feed = null;
 
-            string apiEndpoint = "https://www.alphavantage.co/query?function=GLOBAL_QUOTE";
-            string apiKey = "EDSGIWYZINYLVZ5U";
+            //string apiEndpoint = "https://www.alphavantage.co/query?function=GLOBAL_QUOTE";
+            //string apiKey = "EDSGIWYZINYLVZ5U";
+            //string url = apiEndpoint + "&symbol=" + ticker + "&apikey=" + apiKey;
 
+            string url = "https://api.nasdaq.com/api/quote/" + ticker + "/info?assetclass=stocks";
             try
             {
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(apiEndpoint + "&symbol=" + ticker + "&apikey=" + apiKey);
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
                 feed = await request.GetResponseAsync();
 
 
@@ -84,7 +86,6 @@ namespace BackgroundTasks
             // Create a tile update manager for the specified syndication feed.
             var updater = TileUpdateManager.CreateTileUpdaterForApplication();
             updater.EnableNotificationQueue(true);
-            updater.Clear();
 
             // Keep track of the number feed items that get tile notifications.
             int itemCount = 0;
@@ -98,7 +99,11 @@ namespace BackgroundTasks
                 string titleText = ticker == null ? String.Empty : ticker;
                 tileXml.GetElementsByTagName(textElementName)[0].InnerText = titleText;
                 TileContent tileContent = Notification.CreateNotification(stock.Key, stock.Value);
-                updater.Update(new TileNotification(tileContent.GetXml()));
+                TileNotification notification = new TileNotification(tileContent.GetXml());
+                notification.Tag = ticker;
+                var coming = updater.GetScheduledTileNotifications();
+                
+                updater.Update(notification);
                 // Create a new tile notification.
                 // updater.Update(new TileNotification(tileXml));
 
@@ -111,18 +116,27 @@ namespace BackgroundTasks
 
     class StockData
     {
-        public double LastPrice { get; set; }
+        public string LastPrice { get; set; }
         public double Change { get; set; }
-        public double Open { get; set; }
+        public string Open { get; set; }
         public string ChangePercent { get; set; }
+        public string Time { get; set; }
 
         public StockData(JObject jsonRes)
         {
-            JObject data = jsonRes.Value<JObject>("Global Quote");
-            LastPrice = data.Value<double>("05. price");
-            Change = data.Value<double>("09. change");
-            Open = data.Value<double>("02. open");
-            ChangePercent = data.Value<string>("10. change percent");
+            //JObject data = jsonRes.Value<JObject>("Global Quote");
+            //LastPrice = data.Value<double>("05. price");
+            //Change = data.Value<double>("09. change");
+            //Open = data.Value<double>("02. open");
+            //ChangePercent = data.Value<string>("10. change percent");
+            JObject data = jsonRes.Value<JObject>("data");
+            JObject primaryData = data.Value<JObject>("primaryData");
+            JObject keyStats = data.Value<JObject>("keyStats");
+            LastPrice = primaryData.Value<string>("lastSalePrice");
+            Change = primaryData.Value<double>("netChange");
+            Open = keyStats.Value<JObject>("OpenPrice").Value<string>("value");
+            ChangePercent = data.Value<string>("percentageChange");
+            Time = primaryData.Value<string>("lastTradeTimestamp");
             Debug.WriteLine(LastPrice);
             Debug.WriteLine(Change);
             Debug.WriteLine(Open);
@@ -174,19 +188,24 @@ namespace BackgroundTasks
                                 new AdaptiveText()
                                 {
                                     Text = ticker + " " + data.Change,
-                                    HintStyle = AdaptiveTextStyle.Subheader
+                                    HintStyle = AdaptiveTextStyle.Title
                                 },
 
                                 new AdaptiveText()
                                 {
                                     Text = "Last trade " + data.LastPrice,
-                                    HintStyle = AdaptiveTextStyle.Subtitle
+                                    HintStyle = AdaptiveTextStyle.Base
                                 },
 
                                 new AdaptiveText()
                                 {
                                     Text = "Open " + data.Open,
-                                    HintStyle = AdaptiveTextStyle.Subtitle
+                                    HintStyle = AdaptiveTextStyle.Base
+                                },
+                                new AdaptiveText()
+                                {
+                                    Text = data.Time,
+                                    HintStyle = AdaptiveTextStyle.Base
                                 }
                             }
                         }
@@ -194,6 +213,46 @@ namespace BackgroundTasks
                 }
             };
             return content;
+        }
+    }
+
+    public sealed class StockForegroundTask : IBackgroundTask
+    {
+        private BackgroundTaskDeferral backgroundTaskDeferral;
+        private AppServiceConnection appServiceconnection;
+
+        private IBackgroundTask task;
+        public void Run(IBackgroundTaskInstance taskInstance)
+        {
+            // Get a deferral so that the service isn't terminated.
+            this.backgroundTaskDeferral = taskInstance.GetDeferral();
+
+            // Associate a cancellation handler with the background task.
+            taskInstance.Canceled += OnTaskCanceled;
+
+            // Retrieve the app service connection and set up a listener for incoming app service requests.
+            var details = taskInstance.TriggerDetails as AppServiceTriggerDetails;
+            appServiceconnection = details.AppServiceConnection;
+            appServiceconnection.RequestReceived += OnRequestReceived;
+
+            task = new StockBackgroundTask();
+            task.Run(taskInstance);
+
+
+        }
+
+        private async void OnRequestReceived(AppServiceConnection sender, AppServiceRequestReceivedEventArgs args)
+        {
+            // This function is called when the app service receives a request.
+        }
+
+        private void OnTaskCanceled(IBackgroundTaskInstance sender, BackgroundTaskCancellationReason reason)
+        {
+            if (this.backgroundTaskDeferral != null)
+            {
+                // Complete the service deferral.
+                this.backgroundTaskDeferral.Complete();
+            }
         }
     }
 }
